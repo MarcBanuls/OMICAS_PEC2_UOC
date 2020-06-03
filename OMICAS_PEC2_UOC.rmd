@@ -2,11 +2,521 @@
 title: "banuls_marc_ADO_PEC2"
 author: "Marc Bañuls Tornero"
 date: "27/5/2020"
-output: html_document
+output:
+  pdf_document:
+    toc: TRUE
+  html_document:
+    toc: TRUE
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-#
+```{r echo=FALSE, message=FALSE}
+library(DESeq2)
+```
+
+```{r , include =FALSE}
+setwd(".")
+dir.create("data")
+dir.create("results")
+dir.create("./results/eli_vs_nit")
+dir.create("./results/sfi_vs_nit")
+dir.create("./results/eli_vs_sfi")
+```
+
+
+# Abstract
+
+*EN PROCESO*
+
+# Objetivos
+
+*EN PROCESO*
+
+
+# Materiales y Métodos
+
+## Obtención de datos previos al análisis y materiales
+
+## Métodos
+
+
+### Selección de los datos
+
+```{r , include =FALSE}
+targets <- read.csv("./data/targets.csv", header = T)
+counts <- read.csv2("./data/counts.csv", header = T, check.names = FALSE)
+# Hacemos que los nombres de las filas no cuenten como columnas
+# Además eliminamos la versión del código ENSEMBL para evitar errores en las anotaciones
+tmp <- gsub("\\..*","",counts[,1])
+row.names(counts) <- tmp
+counts <- counts[, -1]
+```
+
+
+```{r}
+head(counts)
+```
+
+Los datos a utilizar en este análisis proceden de un estudio obtenido del repositorio GTEx. Concretamente, el archivo obtenido contiene datos de expresión de un análisis de tiroides, donde se han comparado tres tipos de infiltración. Este archivo contiene 292 muestras pertenecientes a tres grupos:
+- Not infiltrated tissues (NIT): 236 samples
+- Small focal infiltrates (SFI): 42 samples
+- Extensive lymphoid infiltrates (ELI): 14 samples   
+
+
+Para el análisis de estos datos se requiere de la selección de 30 muestras aleatorias totales, siendo 10 de cada grupo mencionado. Para ello se separan por grupos todas las muestras, obteniendo las variables NIT, SFI i ELI con sus respectivas muestras. Posteriormente se seleccionan 10 muestras aleatorias de cada grupo utilizando la función sample. También se incluye un seed concreto (123) por si se quiere replicar el estudio con las mismas muestras.
+
+
+```{r}
+set.seed(123)
+
+subNIT <- subset(targets, targets$Group == "NIT")
+subSFI <- subset(targets, targets$Group == "SFI")
+subELI <- subset(targets, targets$Group == "ELI")
+
+NIT <- subNIT[sample(nrow(subNIT), 10), ]
+SFI <- subSFI[sample(nrow(subSFI), 10), ]
+ELI <- subELI[sample(nrow(subELI), 10), ]
+```
+
+Se unen y ordenan todas las muestras en una nueva tabla de datos:
+```{r}
+samples <- rbind(NIT, SFI, ELI)
+samples <- samples[order(as.numeric(row.names(samples))), ]
+```
+
+Ahora se filtra la tabla de conteos para que sólo contenga las muestras aleatoriamente seleccionadas:
+```{r}
+subcounts <- subset(counts, select = as.character(samples$Sample_Name ))
+head(subcounts)
+```
+
+
+A partir de los archivos obtenidos se crea un objeto DeSeqDataSet:
+```{r message=FALSE}
+dds <- DESeqDataSetFromMatrix(countData = subcounts, colData = samples, design = ~ Group)
+dds
+```
+### Preprocesado de los datos: filtraje y normalización
+
+#### Filtraje
+Se realiza un filtrado de las líneas que no dan ningún tipo de información (las que no tienen conteos en ninguna muestra)
+```{r}
+nrow(dds)
+dds <- dds[ rowSums(counts(dds)) > 1, ]
+nrow(dds)
+```
+
+#### Normalización de datos
+
+Con la función `DESeq` se puede realizar el análisis a partir de los datos crudos (ya que hace la normalización automáticamente), por lo que no es requerida ninguna algoritmo específico previo.
+
+#### Sample distances
+```{r}
+sampleDists <- dist(t(assay(dds)))
+```
+
+```{r message=FALSE, fig.align='center', fig.width=6, fig.height=4}
+library("pheatmap")
+library("RColorBrewer")
+
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( dds$Group)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+
+
+### Identificación de genes diferencialmente expresados
+
+Utilizando al función `DESeq` se ajustan los parámetros de los conteos:
+```{r}
+dds <- DESeq(dds, parallel =TRUE)
+```
+
+#### SFIvsNIT
+`
+Realizamos 3 comparaciones: SFIvsNIT, ELIvsNIT i ELIvsSFI
+```{r}
+res_sfi_nit <- results(dds, contrast=c("Group", "SFI", "NIT"))
+res_sfi_nit
+```
+
+#### ELIvsNIT
+```{r}
+res_eli_nit <- results(dds, contrast=c("Group", "ELI", "NIT"))
+res_eli_nit
+```
+
+
+#### ELIvsSFI
+```{r}
+res_eli_sfi <- results(dds, contrast=c("Group", "ELI", "SFI"))
+res_eli_sfi
+```
+
+```{r}
+summary(res_eli_sfi)
+```
+
+```{r message=FALSE, fig.align='center', fig.width=5, fig.height=4}
+topGene <- rownames(res_eli_sfi)[which.min(res_eli_sfi$padj)]
+
+library("ggbeeswarm")
+
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group"),
+                         returnData = TRUE)
+ggplot(geneCounts, aes(x = Group, y = count, color = Group, group = Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()
+```
+
+This plot demonstrates that only genes with a large average normalized count contain sufficient information to yield a significant call.
+
+```{r fig.align='center', fig.width=5, fig.height=4}
+res3 <- lfcShrink(dds, contrast = c("Group", "ELI", "SFI"))
+plotMA(res3, ylim = c(-5, 5))
+```
+
+### Anotación de los resultados
+```{r}
+library(org.Hs.eg.db)
+library("AnnotationDbi")
+```
+
+### SFI vs NIT
+
+```{r}
+res_sfi_nit$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_sfi_nit),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res_sfi_nit$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_sfi_nit),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res_sfi_nit$name <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res), 
+                     column="GENENAME",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+resOrdered_sfi_nit <- res_sfi_nit[order(res_sfi_nit$pvalue),]
+head(resOrdered_sfi_nit)
+```
+
+```{r}
+resOrderedDF_sfi_nit <- as.data.frame(resOrdered_sfi_nit)
+write.csv(resOrderedDF_sfi_nit, file = "./results/sfi_vs_nit/results_sfi_nit.csv")
+```
+
+Realizamos un Report en html:
+```{r message=FALSE}
+library("ReportingTools")
+htmlRep_sfi_nit <- HTMLReport(shortName="report_sfi_nit", title="SFIvsNIT",
+                      reportDirectory="./results/sfi_vs_nit/")
+publish(resOrderedDF_sfi_nit, htmlRep_sfi_nit)
+url_sfi_nit <- finish(htmlRep_sfi_nit)
+```
+
+
+### ELI vs NIT
+
+```{r}
+res_eli_nit$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_eli_nit),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res_eli_nit$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_eli_nit),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res_eli_nit$name <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res), 
+                     column="GENENAME",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+resOrdered_eli_nit <- res_eli_nit[order(res_eli_nit$pvalue),]
+head(resOrdered_eli_nit)
+```
+
+```{r}
+resOrderedDF_eli_nit <- as.data.frame(resOrdered_eli_nit)
+write.csv(resOrderedDF_eli_nit, file = "./results/eli_vs_nit/results_eli_nit.csv")
+```
+
+Realizamos un Report en html:
+```{r message=FALSE}
+library("ReportingTools")
+htmlRep_eli_nit <- HTMLReport(shortName="report_eli_nit", title="ELIvsNIT",
+                      reportDirectory="./results/eli_vs_nit/")
+publish(resOrderedDF_eli_nit, htmlRep_eli_nit)
+url_eli_nit <- finish(htmlRep_eli_nit)
+```
+
+
+### ELI vs SFI
+```{r}
+res_eli_sfi$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_eli_sfi),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res_eli_sfi$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_eli_sfi),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res_eli_sfi$name <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res), 
+                     column="GENENAME",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+resOrdered_eli_sfi <- res_eli_sfi[order(res_eli_sfi$pvalue),]
+head(resOrdered_eli_sfi)
+```
+
+
+Escribimos a formato csv:
+```{r}
+resOrderedDF_eli_sfi <- as.data.frame(resOrdered_eli_sfi)
+write.csv(resOrderedDF_eli_sfi, file = "./results/eli_vs_sfi/results_eli_sfi.csv")
+```
+
+Realizamos un Report en html:
+```{r message=FALSE}
+library("ReportingTools")
+htmlRep_eli_sfi <- HTMLReport(shortName="report_eli_sfi", title="ELIvsSFI",
+                      reportDirectory="./results/eli_vs_sfi/")
+publish(resOrderedDF_eli_sfi, htmlRep_eli_sfi)
+url <- finish(htmlRep_eli_sfi)
+```
+
+
+### Búsqueda de patrones de expresión y agrupación de las muestras (comparación entre las distintas comparaciones).
+*En proceso*
+Para poder observar la expresión diferencial entre las tres condiciones podemos realizar un diagrama de venn y usar el LikelyHood Ratio  Test o LRT, creo.   
+También podemos realizar un diagrama de venn con los TopGenes de cada comparación (con limma para hacer venn)
+
+### Análisis de significación biológica (“Gene Enrichment Analysis”)
+
+#### KEGG pathway
+
+
+
+```{r}
+library(pathview)
+library(gage)
+library(gageData)
+data(kegg.sets.hs)
+data(sigmet.idx.hs)
+kegg.sets.hs <- kegg.sets.hs[sigmet.idx.hs]
+```
+
+#### SFI vs NIT
+```{r}
+foldchanges_sfi_nit <- resOrderedDF_sfi_nit$log2FoldChange
+names(foldchanges_sfi_nit) <- resOrderedDF_sfi_nit$entrez
+head(foldchanges_sfi_nit)
+```
+
+```{r}
+# Get the results
+keggres_sfi_nit <- gage(foldchanges_sfi_nit, gsets=kegg.sets.hs, same.dir=TRUE)
+
+# Look at both up (greater), down (less), and statatistics.
+lapply(keggres_sfi_nit, head)
+```
+
+
+```{r}
+# Get the pathways
+keggrespathways_sfi_nit <- data.frame(id=rownames(keggres_sfi_nit$greater), keggres_sfi_nit$greater) %>% 
+  tbl_df() %>% 
+  filter(row_number()<=5) %>% 
+  .$id %>% 
+  as.character()
+keggrespathways_sfi_nit
+```
+
+```{r}
+# Get the IDs.
+keggresids_sfi_nit = substr(keggrespathways_sfi_nit, start=1, stop=8)
+keggresids_sfi_nit
+```
+
+```{r}
+# Define plotting function for applying later
+plot_pathway = function(pid) pathview(gene.data=foldchanges_sfi_nit, pathway.id=pid, species="hsa", new.signature=FALSE)
+
+# plot multiple pathways (plots saved to disk and returns a throwaway list object)
+tmp = sapply(keggresids_sfi_nit, function(pid) pathview(gene.data=foldchanges_sfi_nit, pathway.id=pid, species="hsa", kegg.dir = "./results/sfi_vs_nit/"))
+```
+
+
+#### ELI vs NIT
+```{r}
+foldchanges_eli_nit <- resOrderedDF_eli_nit$log2FoldChange
+names(foldchanges_eli_nit) <- resOrderedDF_eli_nit$entrez
+head(foldchanges_eli_nit)
+```
+
+```{r}
+# Get the results
+keggres_eli_nit <- gage(foldchanges_eli_nit, gsets=kegg.sets.hs, same.dir=TRUE)
+
+# Look at both up (greater), down (less), and statatistics.
+lapply(keggres_eli_nit, head)
+```
+
+
+```{r}
+# Get the pathways
+keggrespathways_eli_nit <- data.frame(id=rownames(keggres_eli_nit$greater), keggres_eli_nit$greater) %>% 
+  tbl_df() %>% 
+  filter(row_number()<=5) %>% 
+  .$id %>% 
+  as.character()
+keggrespathways_eli_nit
+```
+
+```{r}
+# Get the IDs.
+keggresids_eli_nit = substr(keggrespathways_eli_nit, start=1, stop=8)
+keggresids_eli_nit
+```
+
+```{r}
+# Define plotting function for applying later
+plot_pathway = function(pid) pathview(gene.data=foldchanges_eli_nit, pathway.id=pid, species="hsa", new.signature=FALSE)
+
+# plot multiple pathways (plots saved to disk and returns a throwaway list object)
+tmp = sapply(keggresids_eli_nit, function(pid) pathview(gene.data=foldchanges_eli_nit, pathway.id=pid, species="hsa", kegg.dir = "./results/eli_vs_nit/"))
+```
+
+
+#### ELI vs SFI
+```{r}
+foldchanges_eli_sfi <- resOrderedDF_eli_sfi$log2FoldChange
+names(foldchanges_eli_sfi) <- resOrderedDF_eli_sfi$entrez
+head(foldchanges_eli_sfi)
+```
+
+```{r}
+# Get the results
+keggres_eli_sfi <- gage(foldchanges_eli_sfi, gsets=kegg.sets.hs, same.dir=TRUE)
+
+# Look at both up (greater), down (less), and statatistics.
+lapply(keggres_eli_sfi, head)
+```
+
+
+```{r}
+# Get the pathways
+keggrespathways_eli_sfi <- data.frame(id=rownames(keggres_eli_sfi$greater), keggres_eli_sfi$greater) %>% 
+  tbl_df() %>% 
+  filter(row_number()<=5) %>% 
+  .$id %>% 
+  as.character()
+keggrespathways_eli_sfi
+```
+
+```{r}
+# Get the IDs.
+keggresids_eli_sfi = substr(keggrespathways_eli_sfi, start=1, stop=8)
+keggresids_eli_sfi
+```
+
+```{r}
+# Define plotting function for applying later
+plot_pathway = function(pid) pathview(gene.data=foldchanges_eli_sfi, pathway.id=pid, species="hsa", new.signature=FALSE)
+
+# plot multiple pathways (plots saved to disk and returns a throwaway list object)
+tmp = sapply(keggresids_eli_sfi, function(pid) pathview(gene.data=foldchanges_eli_sfi, pathway.id=pid, species="hsa", kegg.dir = "./results/eli_vs_sfi/"))
+```
+
+
+
+
+#### Gene Ontology (GO)
+
+
+```{r}
+data(go.sets.hs)
+data(go.subs.hs)
+gobpsets = go.sets.hs[go.subs.hs$BP]
+```
+
+#### SFI vs NIT
+
+```{r}
+gobpres_sfi_nit <- gage(foldchanges_sfi_nit, gsets=gobpsets, same.dir=TRUE)
+write.csv(gobpres_sfi_nit$greater, file = "./results/sfi_vs_nit/GOup_sfi_nit.csv")
+write.csv(gobpres_sfi_nit$less, file = "./results/sfi_vs_nit/GOdown_sfi_nit.csv")
+```
+
+
+#### ELI vs NIT
+
+```{r}
+gobpres_eli_nit <- gage(foldchanges_eli_nit, gsets=gobpsets, same.dir=TRUE)
+
+write.csv(gobpres_eli_nit$greater, file = "./results/sfi_vs_nit/GOup_eli_nit.csv")
+write.csv(gobpres_eli_nit$less, file = "./results/sfi_vs_nit/GOdown_eli_nit.csv")
+```
+
+#### ELI vs SFI
+```{r}
+gobpres_eli_sfi <- gage(foldchanges_eli_sfi, gsets=gobpsets, same.dir=TRUE)
+
+write.csv(gobpres_eli_sfi$greater, file = "./results/sfi_vs_nit/GOup_eli_sfi.csv")
+write.csv(gobpres_eli_sfi$less, file = "./results/sfi_vs_nit/GOdown_eli_sfi.csv")
+```
+
+
+
+# Resultados
+*EN PROCESO*
+
+# Discusión
+*EN PROCESO*
+
+
+
+# Conclusión
+*EN PROCESO*
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
