@@ -3,21 +3,31 @@ title: "banuls_marc_ADO_PEC2"
 author: "Marc Bañuls Tornero"
 date: "27/5/2020"
 output:
-  pdf_document:
-    toc: TRUE
   html_document:
     toc: TRUE
+  pdf_document:
+    toc: TRUE
+    fig_caption: yes
+bibliography: bibliography.bib
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r echo=FALSE, message=FALSE}
+```{r library, include=FALSE}
 library(DESeq2)
+library(dplyr)
+library(ReportingTools)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(pathview)
+library(gage)
+library(gageData)
+library(vidger)
 ```
 
-```{r , include =FALSE}
+```{r directories , include=FALSE}
 setwd(".")
 dir.create("data")
 dir.create("results")
@@ -29,11 +39,11 @@ dir.create("./results/eli_vs_sfi")
 
 # Abstract
 
-*EN PROCESO*
+Se han obtenido datos de expresión génica procedentes de un análisis de tiroides, los cuales están subdivididos según el tipo de infiltración (No infiltrados, Infiltración focal Pequeña y infiltración linfoide extensa). A partir de estos datos se pretende realizar un análisis de la expresión génica en los distintos tipos de infiltración y un análisis de expresión diferencial entre los grupos. La conclusión más relevante de los resultados del análisis de expresión diferencial obtenidos indica que a mayor nivel de infiltración, mayor respuesta inmunitaria se genera en el tejido, en este caso la tiroides.
 
 # Objetivos
 
-*EN PROCESO*
+En este estudio el objetivo principal consiste realizar un análisis de expresión diferencial entre los tres tipos de infiltración de los datos procedentes del análisis de tiroides. Para ello se pretende obtener primero los genes diferencialmente expresados entre cada grupo, observar la cantidad de genes diferencialmente expresados entre los tres grupos y finalmente realizar un análisis de significación biológica, tanto de las rutas metabólicas en las que participan (KEGG) como de su función a partir de su término GO (Gene Ontology).
 
 
 # Materiales y Métodos
@@ -42,6 +52,7 @@ dir.create("./results/eli_vs_sfi")
 
 ## Métodos
 
+El método utilizado para este estudio está basado principalmente en los manuales de cada paquete indicado en su respectiva página de bioconductor, y los pipelines de ejemplo suministrados durante el curso (@alex) y la página web "R-bloggers" (@rbloggers)
 
 ### Selección de los datos
 
@@ -55,11 +66,6 @@ row.names(counts) <- tmp
 counts <- counts[, -1]
 ```
 
-
-```{r}
-head(counts)
-```
-
 Los datos a utilizar en este análisis proceden de un estudio obtenido del repositorio GTEx. Concretamente, el archivo obtenido contiene datos de expresión de un análisis de tiroides, donde se han comparado tres tipos de infiltración. Este archivo contiene 292 muestras pertenecientes a tres grupos:
 - Not infiltrated tissues (NIT): 236 samples
 - Small focal infiltrates (SFI): 42 samples
@@ -69,7 +75,7 @@ Los datos a utilizar en este análisis proceden de un estudio obtenido del repos
 Para el análisis de estos datos se requiere de la selección de 30 muestras aleatorias totales, siendo 10 de cada grupo mencionado. Para ello se separan por grupos todas las muestras, obteniendo las variables NIT, SFI i ELI con sus respectivas muestras. Posteriormente se seleccionan 10 muestras aleatorias de cada grupo utilizando la función sample. También se incluye un seed concreto (123) por si se quiere replicar el estudio con las mismas muestras.
 
 
-```{r}
+```{r, include =FALSE}
 set.seed(123)
 
 subNIT <- subset(targets, targets$Group == "NIT")
@@ -81,118 +87,56 @@ SFI <- subSFI[sample(nrow(subSFI), 10), ]
 ELI <- subELI[sample(nrow(subELI), 10), ]
 ```
 
-Se unen y ordenan todas las muestras en una nueva tabla de datos:
-```{r}
+Se unen y ordenan todas las muestras en una nueva tabla de datos, se filtra la tabla de conteos para que sólo contenga las muestras aleatoriamente seleccionadas y a partir de los archivos obtenidos se crea un objeto DeSeqDataSet mediante el paquete `DESeq2` (@deseq2).
+```{r, include =FALSE}
 samples <- rbind(NIT, SFI, ELI)
 samples <- samples[order(as.numeric(row.names(samples))), ]
-```
-
-Ahora se filtra la tabla de conteos para que sólo contenga las muestras aleatoriamente seleccionadas:
-```{r}
 subcounts <- subset(counts, select = as.character(samples$Sample_Name ))
-head(subcounts)
-```
-
-
-A partir de los archivos obtenidos se crea un objeto DeSeqDataSet:
-```{r message=FALSE}
 dds <- DESeqDataSetFromMatrix(countData = subcounts, colData = samples, design = ~ Group)
 dds
 ```
+
 ### Preprocesado de los datos: filtraje y normalización
 
-#### Filtraje
-Se realiza un filtrado de las líneas que no dan ningún tipo de información (las que no tienen conteos en ninguna muestra)
-```{r}
+**Filtraje**   
+
+
+Se realiza un filtrado de las líneas que no dan ningún tipo de información (las que no tienen conteos en ninguna muestra). De esta manera se facilitan los posteriores procesos y análisis.
+```{r, include =FALSE}
 nrow(dds)
 dds <- dds[ rowSums(counts(dds)) > 1, ]
-nrow(dds)
 ```
 
-#### Normalización de datos
+**Normalización de datos** 
 
-Con la función `DESeq` se puede realizar el análisis a partir de los datos crudos (ya que hace la normalización automáticamente), por lo que no es requerida ninguna algoritmo específico previo.
 
-#### Sample distances
-```{r}
-sampleDists <- dist(t(assay(dds)))
-```
-
-```{r message=FALSE, fig.align='center', fig.width=6, fig.height=4}
-library("pheatmap")
-library("RColorBrewer")
-
-sampleDistMatrix <- as.matrix( sampleDists )
-rownames(sampleDistMatrix) <- paste( dds$Group)
-colnames(sampleDistMatrix) <- NULL
-colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
-pheatmap(sampleDistMatrix,
-         clustering_distance_rows = sampleDists,
-         clustering_distance_cols = sampleDists,
-         col = colors)
-```
-
+El análisis se realiza automáticamente al crear objetos DESeq, por lo que no es requerido ninguna normalización adicional.
 
 
 ### Identificación de genes diferencialmente expresados
 
-Utilizando al función `DESeq` se ajustan los parámetros de los conteos:
-```{r}
-dds <- DESeq(dds, parallel =TRUE)
+Utilizando la función `DESeq` se ajustan los parámetros de los conteos.   
+
+```{r, include=FALSE}
+dds <- DESeq(dds, parallel = TRUE)
 ```
 
-#### SFIvsNIT
-`
-Realizamos 3 comparaciones: SFIvsNIT, ELIvsNIT i ELIvsSFI
-```{r}
+Para identificar los genes diferencialmente expresados entre las distintas condiciones se realizan 3 comparaciones: SFIvsNIT, ELIvsNIT y ELIvsSFI.   
+
+```{r, include =FALSE}
 res_sfi_nit <- results(dds, contrast=c("Group", "SFI", "NIT"))
-res_sfi_nit
-```
-
-#### ELIvsNIT
-```{r}
 res_eli_nit <- results(dds, contrast=c("Group", "ELI", "NIT"))
-res_eli_nit
-```
-
-
-#### ELIvsSFI
-```{r}
 res_eli_sfi <- results(dds, contrast=c("Group", "ELI", "SFI"))
-res_eli_sfi
 ```
 
-```{r}
-summary(res_eli_sfi)
-```
-
-```{r message=FALSE, fig.align='center', fig.width=5, fig.height=4}
-topGene <- rownames(res_eli_sfi)[which.min(res_eli_sfi$padj)]
-
-library("ggbeeswarm")
-
-geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group"),
-                         returnData = TRUE)
-ggplot(geneCounts, aes(x = Group, y = count, color = Group, group = Group)) +
-  scale_y_log10() + geom_point(size = 3) + geom_line()
-```
-
-This plot demonstrates that only genes with a large average normalized count contain sufficient information to yield a significant call.
-
-```{r fig.align='center', fig.width=5, fig.height=4}
-res3 <- lfcShrink(dds, contrast = c("Group", "ELI", "SFI"))
-plotMA(res3, ylim = c(-5, 5))
-```
 
 ### Anotación de los resultados
-```{r}
-library(org.Hs.eg.db)
-library("AnnotationDbi")
-```
 
-### SFI vs NIT
+Para realizar las anotaciones se utiliza el paquete de anotaciones `AnnotationDbi` (@annotation). Después de añadir las anotaciones para cada tabla de comparaciones se pueden ordenar por el p valor, para así encontrar en los primeros lugares los genes más significativos. Finalmente se pueden guardar las tablas anotadas y ordenadas para posteriores observaciones.  
 
-```{r}
+
+```{r, include =FALSE}
+# SFI vs NIT
 res_sfi_nit$symbol <- mapIds(org.Hs.eg.db,
                      keys=row.names(res_sfi_nit),
                      column="SYMBOL",
@@ -204,33 +148,16 @@ res_sfi_nit$entrez <- mapIds(org.Hs.eg.db,
                      keytype="ENSEMBL",
                      multiVals="first")
 res_sfi_nit$name <- mapIds(org.Hs.eg.db,
-                     keys=row.names(res), 
+                     keys=row.names(res_sfi_nit), 
                      column="GENENAME",
                      keytype="ENSEMBL",
                      multiVals="first")
 
 resOrdered_sfi_nit <- res_sfi_nit[order(res_sfi_nit$pvalue),]
-head(resOrdered_sfi_nit)
-```
-
-```{r}
 resOrderedDF_sfi_nit <- as.data.frame(resOrdered_sfi_nit)
 write.csv(resOrderedDF_sfi_nit, file = "./results/sfi_vs_nit/results_sfi_nit.csv")
-```
 
-Realizamos un Report en html:
-```{r message=FALSE}
-library("ReportingTools")
-htmlRep_sfi_nit <- HTMLReport(shortName="report_sfi_nit", title="SFIvsNIT",
-                      reportDirectory="./results/sfi_vs_nit/")
-publish(resOrderedDF_sfi_nit, htmlRep_sfi_nit)
-url_sfi_nit <- finish(htmlRep_sfi_nit)
-```
-
-
-### ELI vs NIT
-
-```{r}
+# ELI vs NIT
 res_eli_nit$symbol <- mapIds(org.Hs.eg.db,
                      keys=row.names(res_eli_nit),
                      column="SYMBOL",
@@ -242,32 +169,16 @@ res_eli_nit$entrez <- mapIds(org.Hs.eg.db,
                      keytype="ENSEMBL",
                      multiVals="first")
 res_eli_nit$name <- mapIds(org.Hs.eg.db,
-                     keys=row.names(res), 
+                     keys=row.names(res_eli_nit), 
                      column="GENENAME",
                      keytype="ENSEMBL",
                      multiVals="first")
 
 resOrdered_eli_nit <- res_eli_nit[order(res_eli_nit$pvalue),]
-head(resOrdered_eli_nit)
-```
-
-```{r}
 resOrderedDF_eli_nit <- as.data.frame(resOrdered_eli_nit)
 write.csv(resOrderedDF_eli_nit, file = "./results/eli_vs_nit/results_eli_nit.csv")
-```
 
-Realizamos un Report en html:
-```{r message=FALSE}
-library("ReportingTools")
-htmlRep_eli_nit <- HTMLReport(shortName="report_eli_nit", title="ELIvsNIT",
-                      reportDirectory="./results/eli_vs_nit/")
-publish(resOrderedDF_eli_nit, htmlRep_eli_nit)
-url_eli_nit <- finish(htmlRep_eli_nit)
-```
-
-
-### ELI vs SFI
-```{r}
+# ELI vs SFI
 res_eli_sfi$symbol <- mapIds(org.Hs.eg.db,
                      keys=row.names(res_eli_sfi),
                      column="SYMBOL",
@@ -279,225 +190,265 @@ res_eli_sfi$entrez <- mapIds(org.Hs.eg.db,
                      keytype="ENSEMBL",
                      multiVals="first")
 res_eli_sfi$name <- mapIds(org.Hs.eg.db,
-                     keys=row.names(res), 
+                     keys=row.names(res_eli_sfi), 
                      column="GENENAME",
                      keytype="ENSEMBL",
                      multiVals="first")
 
 resOrdered_eli_sfi <- res_eli_sfi[order(res_eli_sfi$pvalue),]
-head(resOrdered_eli_sfi)
-```
-
-
-Escribimos a formato csv:
-```{r}
 resOrderedDF_eli_sfi <- as.data.frame(resOrdered_eli_sfi)
 write.csv(resOrderedDF_eli_sfi, file = "./results/eli_vs_sfi/results_eli_sfi.csv")
 ```
 
-Realizamos un Report en html:
-```{r message=FALSE}
-library("ReportingTools")
+Es una buena idea utilizar además el paquete `ReportingTools` (@report) para crear una página web con la tabla de datos y una interfaz intuitiva en la que realizar búsquedas.
+
+```{r, include =FALSE}
+# SFI vs NIT
+htmlRep_sfi_nit <- HTMLReport(shortName="report_sfi_nit", title="SFIvsNIT",
+                      reportDirectory="./results/sfi_vs_nit/")
+publish(resOrderedDF_sfi_nit, htmlRep_sfi_nit)
+url_sfi_nit <- finish(htmlRep_sfi_nit)
+
+# ELI vs NIT
+htmlRep_eli_nit <- HTMLReport(shortName="report_eli_nit", title="ELIvsNIT",
+                      reportDirectory="./results/eli_vs_nit/")
+publish(resOrderedDF_eli_nit, htmlRep_eli_nit)
+url_eli_nit <- finish(htmlRep_eli_nit)
+
+# ELI vs SFI
 htmlRep_eli_sfi <- HTMLReport(shortName="report_eli_sfi", title="ELIvsSFI",
                       reportDirectory="./results/eli_vs_sfi/")
 publish(resOrderedDF_eli_sfi, htmlRep_eli_sfi)
 url <- finish(htmlRep_eli_sfi)
 ```
 
-
-### Búsqueda de patrones de expresión y agrupación de las muestras (comparación entre las distintas comparaciones).
-*En proceso*
-Para poder observar la expresión diferencial entre las tres condiciones podemos realizar un diagrama de venn y usar el LikelyHood Ratio  Test o LRT, creo.   
-También podemos realizar un diagrama de venn con los TopGenes de cada comparación (con limma para hacer venn)
-
 ### Análisis de significación biológica (“Gene Enrichment Analysis”)
 
-#### KEGG pathway
+**KEGG pathway**   
 
+Para realizar el análisis de enriquecimiento de los genes se realiza un análisis de las rutas metabólicas. Para realizar este análisis las anotaciones de las rutas del KEGG son de gran ayuda. En este estudio se utilizan los paquetes `gage` (@gage) y `gageData`(@gagedata).
 
-
-```{r}
-library(pathview)
-library(gage)
-library(gageData)
+```{r, include =FALSE}
 data(kegg.sets.hs)
 data(sigmet.idx.hs)
 kegg.sets.hs <- kegg.sets.hs[sigmet.idx.hs]
 ```
 
-#### SFI vs NIT
-```{r}
+```{r, include =FALSE}
+# SFI vs NIT
+# Preparación de datos
 foldchanges_sfi_nit <- resOrderedDF_sfi_nit$log2FoldChange
 names(foldchanges_sfi_nit) <- resOrderedDF_sfi_nit$entrez
-head(foldchanges_sfi_nit)
-```
 
-```{r}
-# Get the results
+# Obtención de resultados
 keggres_sfi_nit <- gage(foldchanges_sfi_nit, gsets=kegg.sets.hs, same.dir=TRUE)
 
-# Look at both up (greater), down (less), and statatistics.
-lapply(keggres_sfi_nit, head)
-```
-
-
-```{r}
-# Get the pathways
+# Obtención de las rutas diferencialmente expresadas
 keggrespathways_sfi_nit <- data.frame(id=rownames(keggres_sfi_nit$greater), keggres_sfi_nit$greater) %>% 
   tbl_df() %>% 
   filter(row_number()<=5) %>% 
   .$id %>% 
   as.character()
-keggrespathways_sfi_nit
-```
 
-```{r}
-# Get the IDs.
-keggresids_sfi_nit = substr(keggrespathways_sfi_nit, start=1, stop=8)
-keggresids_sfi_nit
-```
+# Guardado de las rutas metabólicas
+plot_pathway <- function(pid) pathview(gene.data=foldchanges_sfi_nit, pathway.id=pid, species="hsa", new.signature=FALSE)
 
-```{r}
-# Define plotting function for applying later
-plot_pathway = function(pid) pathview(gene.data=foldchanges_sfi_nit, pathway.id=pid, species="hsa", new.signature=FALSE)
-
-# plot multiple pathways (plots saved to disk and returns a throwaway list object)
-tmp = sapply(keggresids_sfi_nit, function(pid) pathview(gene.data=foldchanges_sfi_nit, pathway.id=pid, species="hsa", kegg.dir = "./results/sfi_vs_nit/"))
-```
+tmp_sfi_nit <- sapply(keggrespathways_sfi_nit, function(pid) pathview(gene.data=foldchanges_sfi_nit, pathway.id=pid, species="hsa", kegg.dir = "./results/sfi_vs_nit/"))
 
 
-#### ELI vs NIT
-```{r}
+# ELI vs NIT
+# Preparación de datos
 foldchanges_eli_nit <- resOrderedDF_eli_nit$log2FoldChange
 names(foldchanges_eli_nit) <- resOrderedDF_eli_nit$entrez
-head(foldchanges_eli_nit)
-```
 
-```{r}
-# Get the results
+# Obtención de resultados
 keggres_eli_nit <- gage(foldchanges_eli_nit, gsets=kegg.sets.hs, same.dir=TRUE)
 
-# Look at both up (greater), down (less), and statatistics.
-lapply(keggres_eli_nit, head)
-```
-
-
-```{r}
-# Get the pathways
+# Obtención de las rutas diferencialmente expresadas
 keggrespathways_eli_nit <- data.frame(id=rownames(keggres_eli_nit$greater), keggres_eli_nit$greater) %>% 
   tbl_df() %>% 
   filter(row_number()<=5) %>% 
   .$id %>% 
   as.character()
-keggrespathways_eli_nit
-```
 
-```{r}
-# Get the IDs.
-keggresids_eli_nit = substr(keggrespathways_eli_nit, start=1, stop=8)
-keggresids_eli_nit
-```
-
-```{r}
-# Define plotting function for applying later
-plot_pathway = function(pid) pathview(gene.data=foldchanges_eli_nit, pathway.id=pid, species="hsa", new.signature=FALSE)
-
-# plot multiple pathways (plots saved to disk and returns a throwaway list object)
-tmp = sapply(keggresids_eli_nit, function(pid) pathview(gene.data=foldchanges_eli_nit, pathway.id=pid, species="hsa", kegg.dir = "./results/eli_vs_nit/"))
-```
+# Guardado de las rutas metabólicas
+tmp_eli_nit <- sapply(keggrespathways_eli_nit, function(pid) pathview(gene.data=foldchanges_eli_nit, pathway.id=pid, species="hsa", kegg.dir = "./results/eli_vs_nit/"))
 
 
-#### ELI vs SFI
-```{r}
+# ELI vs SFI
+# Preparación de datos
 foldchanges_eli_sfi <- resOrderedDF_eli_sfi$log2FoldChange
 names(foldchanges_eli_sfi) <- resOrderedDF_eli_sfi$entrez
-head(foldchanges_eli_sfi)
-```
 
-```{r}
-# Get the results
+# Obtención de resultados
 keggres_eli_sfi <- gage(foldchanges_eli_sfi, gsets=kegg.sets.hs, same.dir=TRUE)
 
-# Look at both up (greater), down (less), and statatistics.
-lapply(keggres_eli_sfi, head)
-```
-
-
-```{r}
-# Get the pathways
+# Obtención de las rutas diferencialmente expresadas
 keggrespathways_eli_sfi <- data.frame(id=rownames(keggres_eli_sfi$greater), keggres_eli_sfi$greater) %>% 
   tbl_df() %>% 
   filter(row_number()<=5) %>% 
   .$id %>% 
   as.character()
-keggrespathways_eli_sfi
-```
 
-```{r}
-# Get the IDs.
-keggresids_eli_sfi = substr(keggrespathways_eli_sfi, start=1, stop=8)
-keggresids_eli_sfi
-```
+# Guardado de las rutas metabólicas
+tmp_eli_sfi <- sapply(keggrespathways_eli_sfi, function(pid) pathview(gene.data=foldchanges_eli_sfi, pathway.id=pid, species="hsa", kegg.dir = "./results/eli_vs_sfi/"))
 
-```{r}
-# Define plotting function for applying later
-plot_pathway = function(pid) pathview(gene.data=foldchanges_eli_sfi, pathway.id=pid, species="hsa", new.signature=FALSE)
-
-# plot multiple pathways (plots saved to disk and returns a throwaway list object)
-tmp = sapply(keggresids_eli_sfi, function(pid) pathview(gene.data=foldchanges_eli_sfi, pathway.id=pid, species="hsa", kegg.dir = "./results/eli_vs_sfi/"))
 ```
 
 
+**Gene Ontology (GO)**   
 
-
-#### Gene Ontology (GO)
-
-
-```{r}
+De la misma manera se realiza con el mismo paquete que en el análisis de las rutas metabólicas diferencialmente expresada un análisis con los términos GO más expresados diferencialmente.
+```{r, include =FALSE}
 data(go.sets.hs)
 data(go.subs.hs)
-gobpsets = go.sets.hs[go.subs.hs$BP]
+gobpsets <- go.sets.hs[go.subs.hs$BP]
 ```
 
-#### SFI vs NIT
 
-```{r}
+```{r, include =FALSE}
+# SFI vs NIT
 gobpres_sfi_nit <- gage(foldchanges_sfi_nit, gsets=gobpsets, same.dir=TRUE)
 write.csv(gobpres_sfi_nit$greater, file = "./results/sfi_vs_nit/GOup_sfi_nit.csv")
 write.csv(gobpres_sfi_nit$less, file = "./results/sfi_vs_nit/GOdown_sfi_nit.csv")
-```
 
-
-#### ELI vs NIT
-
-```{r}
+# ELI vs NIT
 gobpres_eli_nit <- gage(foldchanges_eli_nit, gsets=gobpsets, same.dir=TRUE)
+write.csv(gobpres_eli_nit$greater, file = "./results/eli_vs_nit/GOup_eli_nit.csv")
+write.csv(gobpres_eli_nit$less, file = "./results/eli_vs_nit/GOdown_eli_nit.csv")
 
-write.csv(gobpres_eli_nit$greater, file = "./results/sfi_vs_nit/GOup_eli_nit.csv")
-write.csv(gobpres_eli_nit$less, file = "./results/sfi_vs_nit/GOdown_eli_nit.csv")
-```
-
-#### ELI vs SFI
-```{r}
+# ELI vs SFI
 gobpres_eli_sfi <- gage(foldchanges_eli_sfi, gsets=gobpsets, same.dir=TRUE)
-
-write.csv(gobpres_eli_sfi$greater, file = "./results/sfi_vs_nit/GOup_eli_sfi.csv")
-write.csv(gobpres_eli_sfi$less, file = "./results/sfi_vs_nit/GOdown_eli_sfi.csv")
+write.csv(gobpres_eli_sfi$greater, file = "./results/eli_vs_sfi/GOup_eli_sfi.csv")
+write.csv(gobpres_eli_sfi$less, file = "./results/eli_vs_sfi/GOdown_eli_sfi.csv")
 ```
 
+# Resultados   
+
+## Control de calidad
+
+Utilizando un gráfico de cajas se puede observar que los datos están normalizados, aunque existe una significativa presencia de outliers en todos los grupos.
+
+```{r, echo=FALSE, fig.cap="Gráfico de cajas"}
+vsBoxPlot(dds, type = "deseq", d.factor = "Group", title = T, legend = T)
+```
+
+Debido a la elevada cantidad de conteos se puede considerar que algunos de éstos se desvíen de la distribución sin afectar significativamente al análisis global. Para realizar el gráfico se utiliza el paquete `vidger` (@vidger).  
+
+## Genes diferencialmente expresados
+
+Se puede realizar una matriz que identifica la cantidad de genes diferencialmente expresados entre las distintas condiciones, utilizando también funciones del paquete `vidger`: 
+```{r, echo=FALSE, fig.cap="Matriz de número de transcritos expresados por grupo"}
+vsDEGMatrix(data = dds, padj = 0.1, d.factor = "Group", type = "deseq", 
+    title = TRUE, legend = TRUE, grid = TRUE)
+```
+De esta manera se puede visualizar rápidamente que entre las condiciones SFI y NIT es donde hay una menor cantidad de genes diferencialmente expresados, mientras que entre las condiciones NIT y ELI se encuentra la mayor cantidad de genes diferencialmente expresados (con un nivel de significación del 0.1).
+
+## Gráficas de genes diferencialmente expresados por grupos
+
+### Gráficos MA
+Utilizando gráficos MA del paquete `vidger` se puede visualizar la cantidad de genes diferencialmente expresados entre cada par de condiciones:   
+
+```{r, echo=FALSE, fig.cap="Matriz MA por grupos por grupos apareados"}
+vsMAMatrix(data = dds, d.factor = "Group", type = "deseq", padj = 0.1,
+           y.lim = NULL, lfc = 1, title = TRUE, 
+           grid = TRUE, counts = TRUE, data.return = FALSE)
+```
+
+### Gráficos de volcán
+De la misma manera que en los gráficos MA, mediante gráficos de volcán se pueden visualizar los genes diferencialmente expresados, utlizando el paquete `vidger`:   
+
+```{r, echo=FALSE, fig.cap="Gráficos de volcán por grupos apareados"}
+vsVolcanoMatrix(data = dds, d.factor = "Group", type = "deseq", padj = 0.1,
+                x.lim = NULL, lfc = NULL, title = TRUE, 
+                legend = TRUE, grid = TRUE, counts = TRUE)
+```
+
+Con estos gráficos no se identifican qué genes son los que se encuentran diferencialmente expresados, pero da una idea de la cantidad de genes con una expresión significativa entre las distintas condiciones.
+
+## Análisis de significación biológica 
+
+### KEGG
+Se pueden visualizar las rutas metabólicas más diferencialmente expresadas en cada comparación (se mostrarán aquí las 6 rutas más significativas para evitar saturar el informe de datos):
+
+**SFI vs NIT**   
 
 
-# Resultados
-*EN PROCESO*
+```{r, echo=FALSE}
+lapply(keggres_sfi_nit, head)
+```
 
+Con estas rutas metabólicas se refleja que el grupo SFI tiene una mayor respuesta inmunológica que el grupo NIT, ya que las rutas metabólicas diferencialmente expresadas están relacionadas con el sistema inmune principalmente. En cambio, el grupo NIT indica una mayor actividad pancreática, de ribosomas y fosforilación oxidativa (entre otros) que el grupo SFI. Razonando las expresiones diferenciales entre los dos grupos, el hecho de que haya una leve infiltración provoca una mayor actividad inmune, teniendo cierta lógica.   
+
+**ELI vs NIT**
+
+```{r, echo=FALSE}
+lapply(keggres_eli_nit, head)
+```
+
+En la comparación de estos grupos, se observa de la misma manera que entre SFI y NIT que ELI tiene una mayor expresión de las rutas metabólicas basadas en la actividad inmunológica que el grupo NIT. El grupo NIT sin embargo tiene una expresión diferencial de unas rutas metabólicas distintas a las encontradas al realizar la comparación con SFI. Concretamente se observa que las rutas metabólicas más diferencialmente expresadas se basan en la fosforilación oxidativa, procesamiento de proteínas en el retículo plasmático y transporte de RNA entre otras, no teniendo una relación concreta entre estas rutas (como sí pasa con las rutas metabólicas relacionadas con la actividad inmmune en SFI y ELI).   
+
+      
+**ELI vs SFI**
+
+```{r, echo=FALSE}
+lapply(keggres_eli_sfi, head)
+```
+En la comparación entre los grupos ELI y SFI se observa que ELI tiene una mayor expresión que SFI en las rutas metabólicas relacionadas con el sistema inmune principalmente, mientras que el grupo SFI tiene una mayor expresión en otros grupos aparentemente no relacionados entre ellos. Al haber observado que tanto el grupo SFI como ELI tienen una sobre-expresión de las rutas metabólicas del sistema inmmune en comparación a NIT, se puede suponer que ELI es el grupo con una mayor activación de las rutas metabólicas relacionadas con el sistema inmune, seguido por el grupo SFI y finalmente el que menos tiene expresado estas rutas metabólicas es NIT.   
+
+Cabe comentar que en los archivos de la carpeta *results* de este informe se encuentran gráficos de cada ruta metabólica más diferencialmente expresada, dividida en cada comparación de grupos.
+
+
+
+### GO 
+
+También se puede realizar un análisis de los términos GO de los genes más diferencialmente expresados en cada comparación (mostrando los 6 términos GO más significativos en cada comparación):   
+
+   
+   
+**SFI VS NIT**
+
+```{r, echo=FALSE}
+lapply(gobpres_sfi_nit, head)
+```
+
+Los términos GO mayormente expresados en SFI respecto a NIT son una vez más los relacionados al sistema inmune o respuesta inmunitaria, mientras que los términos GO más expresados en NIT respecto a SFI  tienen una menor significancia y están más esparcidos en distintas funciones.   
+
+   
+**ELI vs NIT**
+
+```{r, echo=FALSE}
+lapply(gobpres_eli_nit, head)
+```
+
+Una vez más los términos GO más diferencialmente expresados respecto a NIT son los relacionados a la respuesta inmune, mientras que los términos GO más diferencialmente expresados en NIT respecto a ELI varían en mayor medida, no teniendo una relación alta entre las distintas funciones diferencialmente expresadas.   
+
+**ELI vs SFI**
+
+```{r, echo=FALSE}
+lapply(gobpres_eli_sfi, head)
+```
+Finalmente Los términos GO de ELI más diferencialmente expresados respecto a SFI son también las funciones relacionadas al sistema inmunitario, implicando de nuevo que la mayor respuesta inmune de los tres grupos es ELI, seguido por SFI teniendo como menor respuesta inmune el grupo NIT.
+
+## Resumen de archivos obtenidos
+Para información más detallada se recomienda investigar entre los distintos archivos que se han obtenido durante el estudio, los cuales se encuentran separados según la comparación. Como ejemplo se deja una tabla de archivos obtenidos en la comparación entre la condición ELI y NIT.
+
+```{r listOfFiles, echo=FALSE}
+Lista_de_archivos <- dir("./results/eli_vs_nit/") 
+knitr::kable(
+  Lista_de_archivos, booktabs = TRUE,
+  caption = 'Lista de archivos obtenidos en el análisis',
+  col.names="Lista_de_archivos"
+)
+```
 # Discusión
-*EN PROCESO*
-
+Debido a la baja cantidad de muestras del grupo ELI, se han tenido que elegir tan solo 10 muestras aleatorias de cada grupo. Con esta cantidad de muestras (un total de 30, 10 por grupo) los resultados obtenidos tienen una menor precisión y fiabilidad respecto a qué genes están más o menos diferencialmente expresados entre grupos. Además, se han detectado varias rutas metabólicas y términos GO definidos como NA, indicando que a la hora de realizar anotaciones no se ha encontrado el código ENSEMBL pertinente para la respectiva ruta metabólica o término GO. Esto implica que si se encuentra una ruta o término GO de interés no anotada, se tiene que realizar la búsqueda del código pertinente en la base de datos ENSEMBL manualmente.
 
 
 # Conclusión
-*EN PROCESO*
+Aunque una mayor cantidad de muestras para realizar el análisis de expresión diferencial, se han obtenido resultados concluyentes respecto a la expresión de términos GO y rutas metabólicas más o menos expresadas entre grupos. La conclusión más clara es que a mayor infiltración en la tiroides mayor respuesta inmunitaria existe en el tejido. Para obtener más conclusiones relevantes se puede observar la página web generada por el paquete `ReportingTools`.
 
+# Referencias
 
 
 
