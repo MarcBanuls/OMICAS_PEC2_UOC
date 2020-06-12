@@ -3,11 +3,11 @@ title: "banuls_marc_ADO_PEC2"
 author: "Marc Bañuls Tornero"
 date: "27/5/2020"
 output:
-  html_document:
-    toc: TRUE
   pdf_document:
     toc: TRUE
     fig_caption: yes
+  html_document:
+    toc: TRUE
 bibliography: bibliography.bib
 ---
 
@@ -36,6 +36,8 @@ dir.create("./results/sfi_vs_nit")
 dir.create("./results/eli_vs_sfi")
 ```
 
+Todos los archivos y código creados en este informe se encuentran en un repositorio Github. Para acceder a él visite la página web:   
+https://github.com/MarcBanuls/OMICAS_PEC2_UOC.git
 
 # Abstract
 
@@ -329,7 +331,7 @@ write.csv(gobpres_eli_sfi$less, file = "./results/eli_vs_sfi/GOdown_eli_sfi.csv"
 
 Utilizando un gráfico de cajas se puede observar que los datos están normalizados, aunque existe una significativa presencia de outliers en todos los grupos.
 
-```{r, echo=FALSE, fig.cap="Gráfico de cajas"}
+```{r, echo=FALSE, fig.cap="Figura 1. Gráfico de cajas"}
 vsBoxPlot(dds, type = "deseq", d.factor = "Group", title = T, legend = T)
 ```
 
@@ -338,7 +340,7 @@ Debido a la elevada cantidad de conteos se puede considerar que algunos de ésto
 ## Genes diferencialmente expresados
 
 Se puede realizar una matriz que identifica la cantidad de genes diferencialmente expresados entre las distintas condiciones, utilizando también funciones del paquete `vidger`: 
-```{r, echo=FALSE, fig.cap="Matriz de número de transcritos expresados por grupo"}
+```{r, echo=FALSE, fig.cap="Figura 2. Matriz de número de transcritos expresados por grupo"}
 vsDEGMatrix(data = dds, padj = 0.1, d.factor = "Group", type = "deseq", 
     title = TRUE, legend = TRUE, grid = TRUE)
 ```
@@ -349,7 +351,7 @@ De esta manera se puede visualizar rápidamente que entre las condiciones SFI y 
 ### Gráficos MA
 Utilizando gráficos MA del paquete `vidger` se puede visualizar la cantidad de genes diferencialmente expresados entre cada par de condiciones:   
 
-```{r, echo=FALSE, fig.cap="Matriz MA por grupos por grupos apareados"}
+```{r, echo=FALSE, fig.cap="Figura 3. Matriz MA por grupos por grupos apareados"}
 vsMAMatrix(data = dds, d.factor = "Group", type = "deseq", padj = 0.1,
            y.lim = NULL, lfc = 1, title = TRUE, 
            grid = TRUE, counts = TRUE, data.return = FALSE)
@@ -358,7 +360,7 @@ vsMAMatrix(data = dds, d.factor = "Group", type = "deseq", padj = 0.1,
 ### Gráficos de volcán
 De la misma manera que en los gráficos MA, mediante gráficos de volcán se pueden visualizar los genes diferencialmente expresados, utlizando el paquete `vidger`:   
 
-```{r, echo=FALSE, fig.cap="Gráficos de volcán por grupos apareados"}
+```{r, echo=FALSE, fig.cap="Figura 4. Gráficos de volcán por grupos apareados"}
 vsVolcanoMatrix(data = dds, d.factor = "Group", type = "deseq", padj = 0.1,
                 x.lim = NULL, lfc = NULL, title = TRUE, 
                 legend = TRUE, grid = TRUE, counts = TRUE)
@@ -447,6 +449,10 @@ Debido a la baja cantidad de muestras del grupo ELI, se han tenido que elegir ta
 
 # Conclusión
 Aunque una mayor cantidad de muestras para realizar el análisis de expresión diferencial, se han obtenido resultados concluyentes respecto a la expresión de términos GO y rutas metabólicas más o menos expresadas entre grupos. La conclusión más clara es que a mayor infiltración en la tiroides mayor respuesta inmunitaria existe en el tejido. Para obtener más conclusiones relevantes se puede observar la página web generada por el paquete `ReportingTools`.
+
+# Apéndice
+
+Todo el código utilizado se encuentra en el archivo ".rmd" en el repositorio github de la PEC2.
 
 # Referencias
 
